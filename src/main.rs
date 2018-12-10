@@ -16,6 +16,7 @@ enum Op {
     Times(usize),
     Save(String),
     Apply(String),
+    SetRun(String),
 }
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Op, Box<Error>> {
@@ -31,6 +32,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Op, Box<Error>> 
             "times" => (Ok(Op::Times(args.next().ok_or("times wot?")?.parse()?))),
             "save" => (Ok(Op::Save(args.next().ok_or("save to where?")?))),
             "apply" => (Ok(Op::Apply(args.next().ok_or("apply wot?")?.parse()?))),
+            "set-run" => Ok(Op::SetRun(args.next().ok_or("set run to wot?")?)),
             _ => Err(format!("Unknown command: {}", arg).into()),
         },
         None => Err("You must do something".into()),
@@ -44,6 +46,7 @@ struct State {
     rng: ThreadRng,
     changes: Vec<Change>,
     times: usize,
+    run_command: String,
 }
 
 impl Default for State {
@@ -53,6 +56,7 @@ impl Default for State {
             rng: thread_rng(),
             changes: Default::default(),
             times: 1,
+            run_command: Default::default(),
         }
     }
 }
@@ -100,17 +104,18 @@ impl State {
     fn corrupt_random(&mut self, times: usize) -> Result<(), Box<Error>> {
         let rng = &mut self.rng;
         corrupt_from_source(
+            &self.run_command,
             &self.prog,
             &mut self.changes,
             move |flen| (rng.gen_range(0, flen), rng.gen()),
             times,
         )
     }
-    fn run_dosbox(&self) {
-        run_dosbox(&self.prog)
+    fn run(&self) {
+        run(&self.run_command, &self.prog)
     }
     fn again(&self) {
-        self.run_dosbox();
+        self.run();
     }
     fn list(&self) {
         for ch in &self.changes {
@@ -134,6 +139,7 @@ impl State {
         let len = changes.len();
         let mut iter = changes.into_iter();
         corrupt_from_source(
+            &self.run_command,
             &self.prog,
             &mut self.changes,
             |_| {
@@ -143,9 +149,13 @@ impl State {
             len,
         )
     }
+    fn set_run(&mut self, path: String) {
+        self.run_command = path;
+    }
 }
 
 fn corrupt_from_source(
+    command: &str,
     prog: &str,
     changes: &mut Vec<Change>,
     mut fun: impl FnMut(u64) -> (u64, u8),
@@ -167,12 +177,12 @@ fn corrupt_from_source(
             new,
         });
     }
-    run_dosbox(prog);
+    run(command, prog);
     Ok(())
 }
 
-fn run_dosbox(prog: &str) {
-    Command::new("dosbox").arg(prog).status().unwrap();
+fn run(command: &str, prog: &str) {
+    Command::new(command).arg(prog).status().unwrap();
 }
 
 fn main() -> Result<(), Box<Error>> {
@@ -188,6 +198,7 @@ fn main() -> Result<(), Box<Error>> {
         Op::Times(n) => state.set_times(n),
         Op::Save(path) => state.save(&path)?,
         Op::Apply(path) => state.apply(&path)?,
+        Op::SetRun(path) => state.set_run(path),
     }
     state.save_to_path("rc.dat")?;
     Ok(())
