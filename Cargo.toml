@@ -1,0 +1,11 @@
+[package]
+name = "wct"
+version = "0.1.0"
+authors = ["crumblingstatue <radiantstatue@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+serde = "1.0.81"
+bincode = "1.0.1"
+serde_derive = "1.0.81"
+rand = "0.6.1"

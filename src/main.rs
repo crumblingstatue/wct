@@ -1,0 +1,194 @@
+use rand::{rngs::ThreadRng, thread_rng, Rng};
+use serde_derive::{Deserialize, Serialize};
+use std::env;
+use std::error::Error;
+use std::fs::{File, OpenOptions};
+use std::io::{prelude::*, SeekFrom};
+use std::process::Command;
+
+enum Op {
+    Set(String),
+    Good,
+    Bad,
+    Again,
+    List,
+    Reset,
+    Times(usize),
+    Save(String),
+    Apply(String),
+}
+
+fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Op, Box<Error>> {
+    args.next();
+    match args.next() {
+        Some(arg) => match arg.as_str() {
+            "set" => Ok(Op::Set(args.next().ok_or("Set wot?")?)),
+            "good" => (Ok(Op::Good)),
+            "bad" => (Ok(Op::Bad)),
+            "again" => (Ok(Op::Again)),
+            "list" => (Ok(Op::List)),
+            "reset" => (Ok(Op::Reset)),
+            "times" => (Ok(Op::Times(args.next().ok_or("times wot?")?.parse()?))),
+            "save" => (Ok(Op::Save(args.next().ok_or("save to where?")?))),
+            "apply" => (Ok(Op::Apply(args.next().ok_or("apply wot?")?.parse()?))),
+            _ => Err(format!("Unknown command: {}", arg).into()),
+        },
+        None => Err("You must do something".into()),
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct State {
+    prog: String,
+    #[serde(skip, default = "thread_rng")]
+    rng: ThreadRng,
+    changes: Vec<Change>,
+    times: usize,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            prog: Default::default(),
+            rng: thread_rng(),
+            changes: Default::default(),
+            times: 1,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Change {
+    offset: u64,
+    old: u8,
+    new: u8,
+}
+
+impl State {
+    pub fn set_prog(&mut self, prog: String) {
+        self.prog = prog;
+    }
+    pub fn from_path(path: &str) -> Result<Self, Box<Error>> {
+        let f = File::open(path)?;
+        Ok(bincode::deserialize_from(f)?)
+    }
+    pub fn save_to_path(&self, path: &str) -> Result<(), Box<Error>> {
+        let f = File::create(path)?;
+        bincode::serialize_into(f, self)?;
+        Ok(())
+    }
+    pub fn good(&mut self) -> Result<(), Box<Error>> {
+        self.corrupt_random(self.times)
+    }
+    pub fn bad(&mut self) -> Result<(), Box<Error>> {
+        self.revert(self.times)?;
+        self.corrupt_random(self.times)
+    }
+    fn revert(&mut self, n: usize) -> Result<(), Box<Error>> {
+        let mut f = OpenOptions::new().read(true).write(true).open(&self.prog)?;
+        for _ in 0..n {
+            let last_change = self.changes.pop().ok_or("No change to revert")?;
+            f.seek(SeekFrom::Start(last_change.offset))?;
+            f.write_all(&[last_change.old])?;
+            eprintln!(
+                "[r] {:x}: {} <- {}",
+                last_change.offset, last_change.old, last_change.new
+            );
+        }
+        Ok(())
+    }
+    fn corrupt_random(&mut self, times: usize) -> Result<(), Box<Error>> {
+        let rng = &mut self.rng;
+        corrupt_from_source(
+            &self.prog,
+            &mut self.changes,
+            move |flen| (rng.gen_range(0, flen), rng.gen()),
+            times,
+        )
+    }
+    fn run_dosbox(&self) {
+        run_dosbox(&self.prog)
+    }
+    fn again(&self) {
+        self.run_dosbox();
+    }
+    fn list(&self) {
+        for ch in &self.changes {
+            println!("{:x}: {} -> {}", ch.offset, ch.old, ch.new);
+        }
+    }
+    fn reset(&mut self) -> Result<(), Box<Error>> {
+        self.revert(self.changes.len())
+    }
+    fn set_times(&mut self, n: usize) {
+        self.times = n;
+    }
+    fn save(&self, path: &str) -> Result<(), Box<Error>> {
+        let f = File::create(path)?;
+        bincode::serialize_into(f, &self.changes)?;
+        Ok(())
+    }
+    fn apply(&mut self, path: &str) -> Result<(), Box<Error>> {
+        let f = File::open(path)?;
+        let changes: Vec<Change> = bincode::deserialize_from(f)?;
+        let len = changes.len();
+        let mut iter = changes.into_iter();
+        corrupt_from_source(
+            &self.prog,
+            &mut self.changes,
+            |_| {
+                let chg = iter.next().unwrap();
+                (chg.offset, chg.new)
+            },
+            len,
+        )
+    }
+}
+
+fn corrupt_from_source(
+    prog: &str,
+    changes: &mut Vec<Change>,
+    mut fun: impl FnMut(u64) -> (u64, u8),
+    times: usize,
+) -> Result<(), Box<Error>> {
+    let mut f = OpenOptions::new().read(true).write(true).open(prog)?;
+    let len = f.metadata()?.len();
+    for _ in 0..times {
+        let (offset, new) = fun(len);
+        f.seek(SeekFrom::Start(offset))?;
+        let mut old = [0u8];
+        f.read_exact(&mut old)?;
+        f.seek(SeekFrom::Start(offset))?;
+        f.write_all(&[new])?;
+        eprintln!("[c] {:x}: {} -> {}", offset, old[0], new);
+        changes.push(Change {
+            offset,
+            old: old[0],
+            new,
+        });
+    }
+    run_dosbox(prog);
+    Ok(())
+}
+
+fn run_dosbox(prog: &str) {
+    Command::new("dosbox").arg(prog).status().unwrap();
+}
+
+fn main() -> Result<(), Box<Error>> {
+    let args = env::args();
+    let mut state = State::from_path("rc.dat").unwrap_or_default();
+    match parse_args(args)? {
+        Op::Set(wat) => state.set_prog(wat),
+        Op::Good => state.good()?,
+        Op::Bad => state.bad()?,
+        Op::Again => state.again(),
+        Op::List => state.list(),
+        Op::Reset => state.reset()?,
+        Op::Times(n) => state.set_times(n),
+        Op::Save(path) => state.save(&path)?,
+        Op::Apply(path) => state.apply(&path)?,
+    }
+    state.save_to_path("rc.dat")?;
+    Ok(())
+}
