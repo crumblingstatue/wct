@@ -10,7 +10,7 @@ enum Op {
     SetVictim(String),
     Good,
     Bad,
-    Again,
+    JustRun,
     List,
     Reset,
     Times(usize),
@@ -26,7 +26,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Op, Box<Error>> 
             "set-victim" => Ok(Op::SetVictim(args.next().ok_or("Set wot?")?)),
             "good" => (Ok(Op::Good)),
             "bad" => (Ok(Op::Bad)),
-            "again" => (Ok(Op::Again)),
+            "just-run" => (Ok(Op::JustRun)),
             "list" => (Ok(Op::List)),
             "reset" => (Ok(Op::Reset)),
             "times" => (Ok(Op::Times(args.next().ok_or("times wot?")?.parse()?))),
@@ -120,7 +120,7 @@ impl State {
     fn run(&self) {
         run(&self.run_command, &self.victim)
     }
-    fn again(&self) {
+    fn just_run(&self) {
         self.run();
     }
     fn list(&self) {
@@ -209,7 +209,7 @@ fn main() -> Result<(), Box<Error>> {
         Op::SetVictim(victim) => state.set_victim(victim),
         Op::Good => state.good()?,
         Op::Bad => state.bad()?,
-        Op::Again => state.again(),
+        Op::JustRun => state.just_run(),
         Op::List => state.list(),
         Op::Reset => state.reset()?,
         Op::Times(n) => state.set_times(n),
