@@ -82,13 +82,16 @@ impl State {
         Ok(())
     }
     pub fn good(&mut self) -> Result<(), Box<Error>> {
+        self.check_valid()?;
         self.corrupt_random(self.times)
     }
     pub fn bad(&mut self) -> Result<(), Box<Error>> {
+        self.check_valid()?;
         self.revert(self.times)?;
         self.corrupt_random(self.times)
     }
     fn revert(&mut self, n: usize) -> Result<(), Box<Error>> {
+        self.check_valid()?;
         let mut f = OpenOptions::new()
             .read(true)
             .write(true)
@@ -154,6 +157,15 @@ impl State {
     }
     fn set_run(&mut self, path: String) {
         self.run_command = path;
+    }
+    fn check_valid(&self) -> Result<(), &'static str> {
+        if self.victim.is_empty() {
+            Err("Victim is not set. Use `set-victim <path>`.")
+        } else if self.run_command.is_empty() {
+            Err("Run command is not set. Use `set-run <path>`.")
+        } else {
+            Ok(())
+        }
     }
 }
 
