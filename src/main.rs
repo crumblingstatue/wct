@@ -7,7 +7,7 @@ use std::io::{prelude::*, SeekFrom};
 use std::process::Command;
 
 enum Op {
-    Set(String),
+    SetVictim(String),
     Good,
     Bad,
     Again,
@@ -23,7 +23,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Op, Box<Error>> 
     args.next();
     match args.next() {
         Some(arg) => match arg.as_str() {
-            "set" => Ok(Op::Set(args.next().ok_or("Set wot?")?)),
+            "set-victim" => Ok(Op::SetVictim(args.next().ok_or("Set wot?")?)),
             "good" => (Ok(Op::Good)),
             "bad" => (Ok(Op::Bad)),
             "again" => (Ok(Op::Again)),
@@ -41,7 +41,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Op, Box<Error>> 
 
 #[derive(Serialize, Deserialize)]
 struct State {
-    prog: String,
+    victim: String,
     #[serde(skip, default = "thread_rng")]
     rng: ThreadRng,
     changes: Vec<Change>,
@@ -52,7 +52,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            prog: Default::default(),
+            victim: Default::default(),
             rng: thread_rng(),
             changes: Default::default(),
             times: 1,
@@ -69,8 +69,8 @@ struct Change {
 }
 
 impl State {
-    pub fn set_prog(&mut self, prog: String) {
-        self.prog = prog;
+    pub fn set_victim(&mut self, victim: String) {
+        self.victim = victim;
     }
     pub fn from_path(path: &str) -> Result<Self, Box<Error>> {
         let f = File::open(path)?;
@@ -89,7 +89,10 @@ impl State {
         self.corrupt_random(self.times)
     }
     fn revert(&mut self, n: usize) -> Result<(), Box<Error>> {
-        let mut f = OpenOptions::new().read(true).write(true).open(&self.prog)?;
+        let mut f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&self.victim)?;
         for _ in 0..n {
             let last_change = self.changes.pop().ok_or("No change to revert")?;
             f.seek(SeekFrom::Start(last_change.offset))?;
@@ -105,14 +108,14 @@ impl State {
         let rng = &mut self.rng;
         corrupt_from_source(
             &self.run_command,
-            &self.prog,
+            &self.victim,
             &mut self.changes,
             move |flen| (rng.gen_range(0, flen), rng.gen()),
             times,
         )
     }
     fn run(&self) {
-        run(&self.run_command, &self.prog)
+        run(&self.run_command, &self.victim)
     }
     fn again(&self) {
         self.run();
@@ -140,7 +143,7 @@ impl State {
         let mut iter = changes.into_iter();
         corrupt_from_source(
             &self.run_command,
-            &self.prog,
+            &self.victim,
             &mut self.changes,
             |_| {
                 let chg = iter.next().unwrap();
@@ -156,12 +159,12 @@ impl State {
 
 fn corrupt_from_source(
     command: &str,
-    prog: &str,
+    victim: &str,
     changes: &mut Vec<Change>,
     mut fun: impl FnMut(u64) -> (u64, u8),
     times: usize,
 ) -> Result<(), Box<Error>> {
-    let mut f = OpenOptions::new().read(true).write(true).open(prog)?;
+    let mut f = OpenOptions::new().read(true).write(true).open(victim)?;
     let len = f.metadata()?.len();
     for _ in 0..times {
         let (offset, new) = fun(len);
@@ -177,12 +180,12 @@ fn corrupt_from_source(
             new,
         });
     }
-    run(command, prog);
+    run(command, victim);
     Ok(())
 }
 
-fn run(command: &str, prog: &str) {
-    Command::new(command).arg(prog).status().unwrap();
+fn run(command: &str, victim: &str) {
+    Command::new(command).arg(victim).status().unwrap();
 }
 
 const DAT_PATH: &str = "wct.dat";
@@ -191,7 +194,7 @@ fn main() -> Result<(), Box<Error>> {
     let args = env::args();
     let mut state = State::from_path(DAT_PATH).unwrap_or_default();
     match parse_args(args)? {
-        Op::Set(wat) => state.set_prog(wat),
+        Op::SetVictim(victim) => state.set_victim(victim),
         Op::Good => state.good()?,
         Op::Bad => state.bad()?,
         Op::Again => state.again(),
