@@ -185,9 +185,11 @@ fn run(command: &str, prog: &str) {
     Command::new(command).arg(prog).status().unwrap();
 }
 
+const DAT_PATH: &str = "wct.dat";
+
 fn main() -> Result<(), Box<Error>> {
     let args = env::args();
-    let mut state = State::from_path("rc.dat").unwrap_or_default();
+    let mut state = State::from_path(DAT_PATH).unwrap_or_default();
     match parse_args(args)? {
         Op::Set(wat) => state.set_prog(wat),
         Op::Good => state.good()?,
@@ -200,6 +202,6 @@ fn main() -> Result<(), Box<Error>> {
         Op::Apply(path) => state.apply(&path)?,
         Op::SetRun(path) => state.set_run(path),
     }
-    state.save_to_path("rc.dat")?;
+    state.save_to_path(DAT_PATH)?;
     Ok(())
 }
